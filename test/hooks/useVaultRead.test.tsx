@@ -17,9 +17,13 @@ function vc(id: string): VerifiableCredential {
   };
 }
 
+function page(credentials: VerifiableCredential[], nextCursor: string | null = null) {
+  return jsonResponse(200, { credentials, nextCursor });
+}
+
 describe("useVaultRead", () => {
-  it("fetches on mount", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, [vc("a")]));
+  it("fetches page one on mount", async () => {
+    const fetchMock = vi.fn(async () => page([vc("a")]));
     const wrapper = makeWrapper({ fetch: fetchMock });
     const { result } = renderHook(() => useVaultRead("vault-1"), { wrapper });
 
@@ -27,13 +31,14 @@ describe("useVaultRead", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.credentials).toEqual([vc("a")]);
     expect(result.current.error).toBeNull();
+    expect(result.current.hasMore).toBe(false);
   });
 
   it("passes `search` as a query param and refetches when it changes", async () => {
     const fetchMock = mockFetch(async (url) => {
       const u = new URL(String(url));
       const search = u.searchParams.get("search");
-      return jsonResponse(200, search ? [vc(search)] : []);
+      return page(search ? [vc(search)] : []);
     });
     const wrapper = makeWrapper({ fetch: fetchMock });
     const { result, rerender } = renderHook(({ search }: { search?: string }) => useVaultRead("vault-1", { search }), {
@@ -52,7 +57,7 @@ describe("useVaultRead", () => {
     let callCount = 0;
     const fetchMock = vi.fn(async () => {
       callCount += 1;
-      return jsonResponse(200, callCount === 1 ? [] : [vc("a")]);
+      return page(callCount === 1 ? [] : [vc("a")]);
     });
     const wrapper = makeWrapper({ fetch: fetchMock });
     const { result } = renderHook(() => useVaultRead("vault-1"), { wrapper });
@@ -67,7 +72,7 @@ describe("useVaultRead", () => {
   });
 
   it("does not refetch for a different vault's invalidation", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, []));
+    const fetchMock = vi.fn(async () => page([]));
     const wrapper = makeWrapper({ fetch: fetchMock });
     renderHook(() => useVaultRead("vault-1"), { wrapper });
 
@@ -87,7 +92,7 @@ describe("useVaultRead", () => {
       const search = new URL(String(url)).searchParams.get("search") ?? "";
       calls.push(search);
       if (search === "a") return first.promise;
-      return jsonResponse(200, [vc("b-result")]);
+      return page([vc("b-result")]);
     });
     const wrapper = makeWrapper({ fetch: fetchMock });
     const { result, rerender } = renderHook(({ search }: { search: string }) => useVaultRead("vault-1", { search }), {
@@ -99,7 +104,7 @@ describe("useVaultRead", () => {
     await waitFor(() => expect(result.current.credentials).toEqual([vc("b-result")]));
 
     // The stale "a" request resolving afterward must not clobber the newer result.
-    first.resolve(jsonResponse(200, [vc("a-result")]));
+    first.resolve(page([vc("a-result")]));
     await new Promise((r) => setTimeout(r, 0));
     expect(result.current.credentials).toEqual([vc("b-result")]);
   });
@@ -108,7 +113,7 @@ describe("useVaultRead", () => {
     let callCount = 0;
     const fetchMock = vi.fn(async () => {
       callCount += 1;
-      return jsonResponse(200, callCount === 1 ? [] : [vc("a")]);
+      return page(callCount === 1 ? [] : [vc("a")]);
     });
     const wrapper = makeWrapper({ fetch: fetchMock });
     const { result } = renderHook(() => useVaultRead("vault-1"), { wrapper });
@@ -130,5 +135,98 @@ describe("useVaultRead", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.error?.code).toBe("boom");
     expect(result.current.credentials).toEqual([]);
+  });
+
+  it("exposes hasMore from nextCursor and loadMore() appends the next page", async () => {
+    const fetchMock = mockFetch(async (url) => {
+      const cursor = new URL(String(url)).searchParams.get("cursor");
+      if (cursor === null) return page([vc("a")], "cursor-2");
+      if (cursor === "cursor-2") return page([vc("b")], null);
+      throw new Error(`unexpected cursor ${cursor}`);
+    });
+    const wrapper = makeWrapper({ fetch: fetchMock });
+    const { result } = renderHook(() => useVaultRead("vault-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.credentials).toEqual([vc("a")]));
+    expect(result.current.hasMore).toBe(true);
+
+    act(() => {
+      result.current.loadMore();
+    });
+
+    expect(result.current.isLoadingMore).toBe(true);
+    await waitFor(() => expect(result.current.credentials).toEqual([vc("a"), vc("b")]));
+    expect(result.current.isLoadingMore).toBe(false);
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it("passes `pageSize` and the previous page's cursor as query params on loadMore()", async () => {
+    const queries: Array<{ pageSize: string | null; cursor: string | null }> = [];
+    const fetchMock = mockFetch(async (url) => {
+      const u = new URL(String(url));
+      queries.push({ pageSize: u.searchParams.get("pageSize"), cursor: u.searchParams.get("cursor") });
+      return u.searchParams.get("cursor") === null ? page([vc("a")], "cursor-2") : page([vc("b")], null);
+    });
+    const wrapper = makeWrapper({ fetch: fetchMock });
+    const { result } = renderHook(() => useVaultRead("vault-1", { pageSize: 5 }), { wrapper });
+
+    await waitFor(() => expect(result.current.credentials).toEqual([vc("a")]));
+    act(() => {
+      result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.credentials).toEqual([vc("a"), vc("b")]));
+
+    expect(queries).toEqual([
+      { pageSize: "5", cursor: null },
+      { pageSize: "5", cursor: "cursor-2" },
+    ]);
+  });
+
+  it("loadMore() is a no-op once hasMore is false", async () => {
+    const fetchMock = vi.fn(async () => page([vc("a")], null));
+    const wrapper = makeWrapper({ fetch: fetchMock });
+    const { result } = renderHook(() => useVaultRead("vault-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.hasMore).toBe(false));
+
+    act(() => {
+      result.current.loadMore();
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.credentials).toEqual([vc("a")]);
+  });
+
+  it("a full refetch resets accumulated pages and cancels an in-flight loadMore()", async () => {
+    const loadMoreDeferred = deferred<Response>();
+    let refetchCount = 0;
+    const fetchMock = mockFetch(async (url) => {
+      const cursor = new URL(String(url)).searchParams.get("cursor");
+      if (cursor === "cursor-2") return loadMoreDeferred.promise;
+      refetchCount += 1;
+      return page([vc(`refetch-${refetchCount}`)], refetchCount === 1 ? "cursor-2" : null);
+    });
+    const wrapper = makeWrapper({ fetch: fetchMock });
+    const { result } = renderHook(() => useVaultRead("vault-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.credentials).toEqual([vc("refetch-1")]));
+
+    act(() => {
+      result.current.loadMore();
+    });
+    expect(result.current.isLoadingMore).toBe(true);
+
+    act(() => {
+      result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.credentials).toEqual([vc("refetch-2")]));
+    expect(result.current.isLoadingMore).toBe(false);
+    expect(result.current.hasMore).toBe(false);
+
+    // The superseded loadMore() resolving afterward must not resurrect stale pages.
+    loadMoreDeferred.resolve(page([vc("stale")], null));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(result.current.credentials).toEqual([vc("refetch-2")]);
   });
 });

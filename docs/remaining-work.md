@@ -9,9 +9,6 @@ just tracks local scope decisions.
   contract ids, issuer DIDs, and the G.../C... account-vs-smart-wallet
   distinction that the lower-level `@acta-team/credentials` package exposes.
   Reach for that package directly when an integration needs that control.
-- **No pagination cursor on `useVaultRead`.** It supports a `search` filter
-  only; a vault with a very large credential list has no cursor/page-size
-  knob yet.
 - **No offline queueing or automatic retry** of a failed prepare/sign/submit
   action — a rejected action is left for the caller to retry.
 - **No websocket or live subscription** for credential status changes.

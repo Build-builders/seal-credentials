@@ -92,16 +92,24 @@ passed to `useVault`; `issueCredential`'s input can also carry its own
 cancel-safe: state updates are skipped after unmount, and in-flight
 requests are aborted on unmount.
 
-### `useVaultRead(vaultId, { search? })` — read a vault's credentials
+### `useVaultRead(vaultId, { search?, pageSize? })` — read a vault's credentials
 
 ```tsx
-const { credentials, isLoading, error, refetch } = useVaultRead(vaultId, { search: "ada" });
+const { credentials, isLoading, isLoadingMore, hasMore, error, refetch, loadMore } = useVaultRead(vaultId, {
+  search: "ada",
+  pageSize: 20,
+});
 ```
 
-Fetches on mount and whenever `vaultId`/`search` change. Automatically
-refetches when a `useVault` write invalidates this vault — no manual
-`refetch()` needed after issuing or revoking a credential in the same
-vault.
+Fetches page one on mount and whenever `vaultId`/`search`/`pageSize`
+change. Automatically refetches (from page one) when a `useVault` write
+invalidates this vault — no manual `refetch()` needed after issuing or
+revoking a credential in the same vault.
+
+Call `loadMore()` to fetch and append the next page — `hasMore` tells you
+whether one exists, and `isLoadingMore` reflects that fetch in flight
+(`isLoading` only covers the initial/refetch load). `loadMore()` is a
+no-op once `hasMore` is `false`.
 
 ### `useCredential(id)` — read a single credential
 
