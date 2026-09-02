@@ -74,9 +74,32 @@ export const submitRevokeCredential = (
 
 // --- reads ---
 
-export const listVaultCredentials = (ctx: ActaContextValue, vaultId: string, search: string | undefined, signal?: AbortSignal) => {
-  const query = search ? `?search=${encodeURIComponent(search)}` : "";
-  return request<VerifiableCredential[]>(ctx, `/vaults/${encodeURIComponent(vaultId)}/credentials${query}`, { signal });
+export interface ListVaultCredentialsParams {
+  search?: string;
+  /** Max credentials per page. Falls back to the API's own default when omitted. */
+  pageSize?: number;
+  /** Opaque cursor from a previous page's `nextCursor`. Omit to fetch the first page. */
+  cursor?: string;
+}
+
+export interface CredentialPage {
+  credentials: VerifiableCredential[];
+  /** Opaque cursor for the next page, or `null` when this is the last page. */
+  nextCursor: string | null;
+}
+
+export const listVaultCredentials = (
+  ctx: ActaContextValue,
+  vaultId: string,
+  params: ListVaultCredentialsParams = {},
+  signal?: AbortSignal,
+) => {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  if (params.pageSize !== undefined) query.set("pageSize", String(params.pageSize));
+  if (params.cursor !== undefined) query.set("cursor", params.cursor);
+  const qs = query.toString();
+  return request<CredentialPage>(ctx, `/vaults/${encodeURIComponent(vaultId)}/credentials${qs ? `?${qs}` : ""}`, { signal });
 };
 
 export const getCredential = (ctx: ActaContextValue, id: string, signal?: AbortSignal) =>

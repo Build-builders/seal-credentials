@@ -167,7 +167,7 @@ describe("useVault", () => {
       if (u.endsWith("/vaults/vault-1/credentials/submit")) return jsonResponse(200, credential);
       if (u.includes("/vaults/vault-1/credentials")) {
         listCallCount += 1;
-        return jsonResponse(200, listCallCount === 1 ? [] : [credential]);
+        return jsonResponse(200, { credentials: listCallCount === 1 ? [] : [credential], nextCursor: null });
       }
       throw new Error(`unexpected request: ${u}`);
     });
